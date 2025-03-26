@@ -23,14 +23,11 @@ def index():
         if not question or question.strip().lower() == "exit":
             return render_template("index.html", error="Please enter a valid question.")
         
-        # Run the agent
         response = agent.run(question)
         
-        # Handle errors
         if "error" in response:
             return render_template("index.html", error=response["error"], query=response.get("query"))
         
-        # Prepare results for display
         results = {
             "query": response.get("query"),
             "results": response.get("results"),
@@ -44,4 +41,5 @@ def index():
 
 if __name__ == "__main__":
     # For local testing
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=True, host="0.0.0.0", port=port)
