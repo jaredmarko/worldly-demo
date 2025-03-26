@@ -1,6 +1,6 @@
 import os
 from flask import Flask, request, render_template
-from worldly_agent import WorldlySustainabilityAgent  # Import your agent
+from worldly_agent import WorldlySustainabilityAgent
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -9,13 +9,9 @@ WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 if not WEATHER_API_KEY:
     raise ValueError("Missing WEATHER_API_KEY in environment variables.")
 
-# Initialize Flask app
 app = Flask(__name__)
+agent = WorldlySustainabilityAgent(db_path="/tmp/worldly_risk.db")
 
-# Initialize the Worldly agent
-agent = WorldlySustainabilityAgent()
-
-# Home route
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
@@ -40,6 +36,5 @@ def index():
     return render_template("index.html")
 
 if __name__ == "__main__":
-    # For local testing
     port = int(os.environ.get("PORT", 5000))
-    app.run(debug=True, host="0.0.0.0", port=port)
+    app.run(debug=False, host="0.0.0.0", port=port)
