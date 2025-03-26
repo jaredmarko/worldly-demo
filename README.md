@@ -1,6 +1,6 @@
 # Sustainability Risk Agent
 
-![Sustainability Risk Agent Demo]
+[Sustainability Risk Agent Demo]
 *Live Demo: [https://worldly-demo.onrender.com](https://worldly-demo.onrender.com)*  
 *GitHub Repository: [https://github.com/jaredmarko/worldly-demo](https://github.com/jaredmarko/worldly-demo)*
 
