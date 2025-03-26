@@ -4,7 +4,6 @@ from typing import List, Dict, Any
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from dotenv import load_dotenv
-import redis
 import json
 import plotly.express as px
 from datetime import datetime
@@ -18,11 +17,10 @@ WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 if not WEATHER_API_KEY:
     raise ValueError("Missing WEATHER_API_KEY in environment variables.")
 
-# Redis setup
-redis_client = redis.StrictRedis(host="localhost", port=6379, db=0, decode_responses=True)
-
 # Step 1: Initialize Database with Expanded Real-World Data
-def initialize_sustainability_db(db_path: str = "worldly_risk.db") -> None:
+def initialize_sustainability_db(db_path: str = "/tmp/worldly_risk.db") -> None:
+    # Ensure the directory exists
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
@@ -112,8 +110,10 @@ def initialize_sustainability_db(db_path: str = "worldly_risk.db") -> None:
 
 # Step 2: Worldly Sustainability Risk Agent
 class WorldlySustainabilityAgent:
-    def __init__(self, db_path: str = "worldly_risk.db"):
+    def __init__(self, db_path: str = "/tmp/worldly_risk.db"):
         self.engine = create_engine(f"sqlite:///{db_path}")
+        # Initialize database on startup
+        initialize_sustainability_db(db_path)
         self.schema = self._get_full_schema()
         self.supplier_names = self._get_supplier_names()
 
@@ -201,11 +201,12 @@ class WorldlySustainabilityAgent:
         return ((end - start) / start) * 100 if start != 0 else 0.0
 
     def _cache_result(self, key: str, value: Dict[str, Any], ttl: int = 3600) -> None:
-        redis_client.setex(key, ttl, json.dumps(value))
+        # Removed Redis dependency - use a simple in-memory cache for now
+        pass
 
     def _get_cached_result(self, key: str) -> Dict[str, Any] | None:
-        cached = redis_client.get(key)
-        return json.loads(cached) if cached else None
+        # Removed Redis dependency - return None for now
+        return None
 
     def _validate_sql(self, query: str) -> bool:
         try:
@@ -272,7 +273,6 @@ class WorldlySustainabilityAgent:
                     break
 
         # Step 4: Generate SQL based on query type
-        # Combined product queries (location + material)
         if "products" in question and location and material:
             if "low carbon footprint" in question:
                 return f"SELECT p.name, s.name AS supplier, p.carbon_per_unit FROM products p JOIN suppliers s ON p.supplier_id = s.id WHERE s.location LIKE '%{location}%' AND p.material LIKE '%{material}%' ORDER BY p.carbon_per_unit ASC;"
@@ -280,7 +280,6 @@ class WorldlySustainabilityAgent:
                 return f"SELECT p.name, s.name AS supplier, p.water_per_unit FROM products p JOIN suppliers s ON p.supplier_id = s.id WHERE s.location LIKE '%{location}%' AND p.material LIKE '%{material}%' ORDER BY p.water_per_unit DESC;"
             return f"SELECT p.name, s.name AS supplier, p.water_per_unit FROM products p JOIN suppliers s ON p.supplier_id = s.id WHERE s.location LIKE '%{location}%' AND p.material LIKE '%{material}%';"
 
-        # Supplier queries with location and metric
         if "suppliers" in question and location:
             if "highest carbon footprint" in question:
                 return f"SELECT name, location, carbon_footprint FROM suppliers WHERE location LIKE '%{location}%' ORDER BY carbon_footprint DESC;"
@@ -290,16 +289,13 @@ class WorldlySustainabilityAgent:
                 return f"SELECT name, location, compliance_score FROM suppliers WHERE location LIKE '%{location}%' AND compliance_score < 0.9 ORDER BY compliance_score ASC;"
             return f"SELECT name, location, latitude, longitude FROM suppliers WHERE location LIKE '%{location}%';"
 
-        # Material-based queries without location
         if material:
             return f"SELECT p.name, s.name AS supplier, p.water_per_unit FROM products p JOIN suppliers s ON p.supplier_id = s.id WHERE p.material LIKE '%{material}%';"
 
-        # Trend queries
         if "trend" in question or "historical" in question:
             if supplier_name:
                 return f"SELECT s.name, sh.year, sh.carbon_footprint, sh.water_usage, sh.compliance_score FROM supplier_history sh JOIN suppliers s ON sh.supplier_id = s.id WHERE s.name = '{supplier_name}' ORDER BY sh.year;"
 
-        # Other queries
         if "highest carbon footprint" in question:
             return "SELECT name, carbon_footprint FROM suppliers ORDER BY carbon_footprint DESC;"
         elif "highest water usage" in question:
@@ -313,7 +309,6 @@ class WorldlySustainabilityAgent:
         elif "highest risk" in question:
             return "SELECT name, carbon_footprint, water_usage, compliance_score FROM suppliers;"
 
-        # Fallback default query
         return "SELECT * FROM suppliers LIMIT 1;"
 
     def execute_query(self, query: str) -> List[Dict[str, Any]]:
@@ -324,7 +319,6 @@ class WorldlySustainabilityAgent:
 
     def generate_insight(self, question: str, results: List[Dict[str, Any]], external_data: Dict[str, Any]) -> str:
         question = question.lower()
-        # Extract location explicitly for use in insights
         location = "India" if "india" in question else "China" if "china" in question else "USA" if "usa" in question else "Bangladesh" if "bangladesh" in question else "Pakistan" if "pakistan" in question else "Italy" if "italy" in question else "unknown"
         
         if not results:
@@ -335,7 +329,6 @@ class WorldlySustainabilityAgent:
                 return f"No products in {location} use {material}—Worldly can explore alternative materials or regions."
             return "No data available to generate insight."
 
-        # Product queries with materials
         if "products in" in question and ("use" in question or "are made of" in question):
             product = results[0]["name"]
             supplier = results[0]["supplier"]
@@ -343,23 +336,21 @@ class WorldlySustainabilityAgent:
             weather = external_data["weather"][supplier]["condition"] if supplier in external_data["weather"] else "unknown"
             if "high water usage" in question:
                 water_usage = results[0]["water_per_unit"]
-                industry_avg = 15.0  # Example industry average for apparel products
+                industry_avg = 15.0
                 comparison = "above" if water_usage > industry_avg else "below"
                 diff = ((water_usage - industry_avg) / industry_avg) * 100 if industry_avg != 0 else 0
                 return f"{product} from {supplier} uses {material} and has high water usage at {water_usage} m³, {abs(diff):.1f}% {comparison} the industry average of {industry_avg} m³. Weather conditions ({weather}) may impact production—Worldly can explore sustainable alternatives to reduce water impact."
             if "low carbon footprint" in question:
                 carbon_footprint = results[0]["carbon_per_unit"]
-                industry_avg = 0.5  # Example industry average for apparel products
+                industry_avg = 0.5
                 comparison = "below" if carbon_footprint < industry_avg else "above"
                 diff = ((carbon_footprint - industry_avg) / industry_avg) * 100 if industry_avg != 0 else 0
                 return f"{product} from {supplier} uses {material} and has a low carbon footprint at {carbon_footprint} kg CO2e, {abs(diff):.1f}% {comparison} the industry average of {industry_avg} kg CO2e. Weather conditions ({weather}) may impact production—Worldly can highlight this for sustainable sourcing."
             return f"{product} from {supplier} uses {material}, which may have sustainability implications. Weather conditions ({weather}) may impact production—Worldly can assess its environmental impact."
 
-        # Trend queries with dynamic metric selection
         if "trend" in question or "historical" in question:
             supplier_name = results[0]["name"] if "name" in results[0] else "Unknown"
             trends = results
-            # Determine the metric to analyze based on the question
             metric = "carbon_footprint"
             metric_name = "carbon footprint"
             unit = "tons CO2e"
@@ -377,16 +368,15 @@ class WorldlySustainabilityAgent:
             future = self._predict_future(trends, metric)
             return f"{supplier_name}’s {metric_name} is {trend} from {trends[0][metric]} in 2021 to {trends[-1][metric]} in 2024 ({trend_pct:.1f}% change). If trends continue, it may be {future:.1f} {unit} by 2025—Worldly can leverage this trend to meet client ESG goals."
 
-        # Supplier queries with location and metric
         if "suppliers in" in question or "suppliers are in" in question or "suppliers located in" in question:
             supplier = results[0]["name"]
             if "highest carbon footprint" in question:
                 with self.engine.connect() as conn:
                     supplier_id = conn.execute(text("SELECT id FROM suppliers WHERE name = :name"), {"name": supplier}).fetchone()[0]
                     trends = self._fetch_historical_trends(supplier_id)
-                current_value = trends[-1]["carbon_footprint"]  # Use latest historical value (2024)
+                current_value = trends[-1]["carbon_footprint"]
                 trend = "decreasing" if trends[-1]["carbon_footprint"] < trends[0]["carbon_footprint"] else "increasing"
-                future = self._predict_future(trends, "carbon_footprint")  # Predict 2025 based on 2021-2024 trend
+                future = self._predict_future(trends, "carbon_footprint")
                 trend_pct = self._calculate_trend_percentage(trends, "carbon_footprint")
                 if "china" in question:
                     return f"{supplier} in China has the highest carbon footprint at {current_value} tons CO2e in 2024, with a {trend} trend ({trend_pct:.1f}% since 2021). China’s strict emissions regulations may require Worldly’s Higg Index to accelerate reductions to {future:.1f} tons by 2025."
@@ -403,13 +393,12 @@ class WorldlySustainabilityAgent:
                 return f"{supplier} has the lowest compliance score at {results[0]['compliance_score']}—Worldly should prioritize an audit to improve ESG performance."
             return f"{supplier} is located in {location}, which may face regional sustainability challenges—Worldly can assess local impacts."
 
-        # Other queries
         if "highest carbon footprint" in question:
             top_supplier = results[0]["name"]
             with self.engine.connect() as conn:
                 supplier_id = conn.execute(text("SELECT id FROM suppliers WHERE name = :name"), {"name": top_supplier}).fetchone()[0]
                 trends = self._fetch_historical_trends(supplier_id)
-            current_value = trends[-1]["carbon_footprint"]  # Use latest historical value (2024)
+            current_value = trends[-1]["carbon_footprint"]
             trend = "decreasing" if trends[-1]["carbon_footprint"] < trends[0]["carbon_footprint"] else "increasing"
             future = self._predict_future(trends, "carbon_footprint")
             trend_pct = self._calculate_trend_percentage(trends, "carbon_footprint")
@@ -461,7 +450,6 @@ class WorldlySustainabilityAgent:
         }
 
         question = question.lower()
-        # Visualization for carbon footprint (suppliers)
         if "carbon_footprint" in df.columns and "name" in df.columns and "year" not in df.columns:
             external_data = self._fetch_external_data()
             df["emissions_risk"] = df["name"].map(lambda x: external_data["sustainability"][x]["emissions_risk"])
@@ -497,9 +485,8 @@ class WorldlySustainabilityAgent:
                     yshift=10,
                     font=dict(color=worldly_colors["high_risk"])
                 )
-            filename = f"worldly_carbon_viz_{timestamp}.html"
+            filename = f"static/worldly_carbon_viz_{timestamp}.html"
 
-        # Visualization for water usage (suppliers)
         elif "water_usage" in df.columns and "name" in df.columns and "year" not in df.columns:
             external_data = self._fetch_external_data()
             df["water_risk"] = df["name"].map(lambda x: external_data["sustainability"][x]["water_risk"])
@@ -531,9 +518,8 @@ class WorldlySustainabilityAgent:
                     yshift=10,
                     font=dict(color=worldly_colors["high_risk"])
                 )
-            filename = f"worldly_water_usage_viz_{timestamp}.html"
+            filename = f"static/worldly_water_usage_viz_{timestamp}.html"
 
-        # Visualization for product queries with water_per_unit
         elif "water_per_unit" in df.columns and "name" in df.columns and "year" not in df.columns:
             df["color"] = df["supplier"].map({
                 "Shahjalal Textile Mills": worldly_colors["shahjalal"],
@@ -557,7 +543,6 @@ class WorldlySustainabilityAgent:
             )
             industry_avg = 15.0
             fig.add_hline(y=industry_avg, line_dash="dash", line_color="gray", annotation_text="Industry Avg (15 m³)", annotation_position="top left")
-            # Add weather risk annotation if applicable
             external_data = self._fetch_external_data()
             for _, row in df.iterrows():
                 supplier = row["supplier"]
@@ -572,9 +557,8 @@ class WorldlySustainabilityAgent:
                         yshift=10,
                         font=dict(color=worldly_colors["high_risk"])
                     )
-            filename = f"worldly_water_viz_{timestamp}.html"
+            filename = f"static/worldly_water_viz_{timestamp}.html"
 
-        # Visualization for product queries with carbon_per_unit
         elif "carbon_per_unit" in df.columns and "name" in df.columns and "year" not in df.columns:
             df["color"] = df["supplier"].map({
                 "Shahjalal Textile Mills": worldly_colors["shahjalal"],
@@ -598,7 +582,6 @@ class WorldlySustainabilityAgent:
             )
             industry_avg = 0.5
             fig.add_hline(y=industry_avg, line_dash="dash", line_color="gray", annotation_text="Industry Avg (0.5 kg CO2e)", annotation_position="top left")
-            # Add weather risk annotation if applicable
             external_data = self._fetch_external_data()
             for _, row in df.iterrows():
                 supplier = row["supplier"]
@@ -613,9 +596,8 @@ class WorldlySustainabilityAgent:
                         yshift=10,
                         font=dict(color=worldly_colors["high_risk"])
                     )
-            filename = f"worldly_carbon_per_unit_viz_{timestamp}.html"
+            filename = f"static/worldly_carbon_per_unit_viz_{timestamp}.html"
 
-        # Visualization for compliance scores
         elif "compliance_score" in df.columns and "location" in df.columns and "year" not in df.columns:
             df["status"] = df["compliance_score"].apply(lambda x: "Below Threshold" if x < 0.9 else "Above Threshold")
             df["color"] = df["status"].map({
@@ -635,12 +617,10 @@ class WorldlySustainabilityAgent:
             fig.add_hline(y=0.9, line_dash="dash", line_color="red", annotation_text="Compliance Threshold (0.9)", annotation_position="top right")
             industry_avg = 0.92
             fig.add_hline(y=industry_avg, line_dash="dash", line_color="gray", annotation_text="Industry Avg (0.92)", annotation_position="top left")
-            filename = f"worldly_compliance_viz_{timestamp}.html"
+            filename = f"static/worldly_compliance_viz_{timestamp}.html"
 
-        # Visualization for trend queries with dynamic metric selection
         elif "year" in df.columns and ("carbon_footprint" in df.columns or "water_usage" in df.columns or "compliance_score" in df.columns):
             supplier_name = df["name"].iloc[0] if "name" in df.columns else "Unknown"
-            # Determine the metric to plot based on the question
             metric = "carbon_footprint"
             metric_label = "Carbon Footprint (tons CO2e)"
             industry_avg = 1000.0
@@ -665,9 +645,8 @@ class WorldlySustainabilityAgent:
                 markers=True
             )
             fig.add_hline(y=industry_avg, line_dash="dash", line_color="gray", annotation_text=industry_avg_label, annotation_position="top left")
-            filename = f"worldly_trend_viz_{timestamp}.html"
+            filename = f"static/worldly_trend_viz_{timestamp}.html"
 
-        # Visualization for supplier locations
         elif "location" in df.columns and "name" in df.columns and "latitude" in df.columns and "longitude" in df.columns:
             fig = px.scatter_geo(
                 df,
@@ -686,7 +665,7 @@ class WorldlySustainabilityAgent:
                 showocean=True,
                 oceancolor="LightBlue"
             )
-            filename = f"worldly_location_viz_{timestamp}.html"
+            filename = f"static/worldly_location_viz_{timestamp}.html"
 
         else:
             return None
@@ -703,8 +682,10 @@ class WorldlySustainabilityAgent:
             yaxis=dict(showgrid=True, gridcolor="lightgray") if "year" not in df.columns else dict(showgrid=True, gridcolor="lightgray"),
             margin=dict(l=50, r=50, t=50, b=50)
         )
+        # Ensure the static directory exists
+        os.makedirs("static", exist_ok=True)
         fig.write_html(filename)
-        return filename
+        return filename.split('/', 1)[-1]  # Return just the filename for Flask to serve
 
     def run(self, question: str) -> Dict[str, Any]:
         cache_key = f"worldly:{hash(question)}"
@@ -718,7 +699,6 @@ class WorldlySustainabilityAgent:
                 return {"error": "Invalid SQL generated.", "query": sql_query}
 
             results = self.execute_query(sql_query)
-            # Always fetch external data, even if results are empty
             external_data = self._fetch_external_data()
             if not results:
                 response = {
@@ -753,29 +733,3 @@ class WorldlySustainabilityAgent:
 
         except Exception as e:
             return {"error": str(e), "query": sql_query if 'sql_query' in locals() else None}
-
-# Step 3: Interactive Demo for Worldly Interview
-if __name__ == "__main__":
-    print("Welcome to the Worldly Sustainability Risk Agent Demo - March 26, 2025")
-    print("Built to enhance Worldly’s ESG transparency with real-world data and actionable insights")
-    print("Enter a question about suppliers, products, or trends (or type 'exit' to quit)\n")
-    initialize_sustainability_db()
-    agent = WorldlySustainabilityAgent()
-
-    while True:
-        question = input("Your question: ")
-        if not question.strip():  # Check for empty or whitespace-only input
-            print("\nPlease enter a valid question or type 'exit' to quit.\n")
-            continue
-        if question.lower() == "exit":
-            break
-        print(f"\nQuestion: {question}")
-        response = agent.run(question)
-        print(f"SQL Query: {response.get('query')}")
-        print(f"Results: {response.get('results')}")
-        print(f"Insight: {response.get('insight', 'N/A')}")
-        print(f"Visualization: {response.get('visualization')}")
-        print(f"External Data Summary: {response.get('external_data_summary')}")
-        if "error" in response:
-            print(f"Error: {response['error']}")
-        print("\n")
